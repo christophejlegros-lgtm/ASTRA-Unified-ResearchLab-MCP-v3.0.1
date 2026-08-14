@@ -3,13 +3,44 @@
 **Autonomous Sentient Thoughtful Reasoning Agent**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-cyan.svg)](LICENSE)
-[![CI](https://github.com/christophejlegros-lgtm/ASTRA-Unified-ResearchLab-MCP-v2.9/actions/workflows/ci.yml/badge.svg)](https://github.com/christophejlegros-lgtm/ASTRA-Unified-ResearchLab-MCP-v2.9/actions)
+[![CI](https://github.com/christophejlegros-lgtm/ASTRA-Unified-ResearchLab-MCP-v3.0.1/actions/workflows/ci.yml/badge.svg)](https://github.com/christophejlegros-lgtm/ASTRA-Unified-ResearchLab-MCP-v3.0.1/actions)
 [![MCP Spec](https://img.shields.io/badge/MCP_Spec-2025--11--25-blue.svg)](https://modelcontextprotocol.io/specification/2025-11-25)
 [![MCP SDK](https://img.shields.io/badge/MCP_SDK-1.12+-blueviolet.svg)](https://modelcontextprotocol.io)
 [![Node.js](https://img.shields.io/badge/Node.js-≥20-green.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://typescriptlang.org)
 
 Production-grade [Model Context Protocol](https://modelcontextprotocol.io) server exposing the ASTRA bio-hybrid neuromorphic simulation pipeline to AI assistants. Built with the official `@modelcontextprotocol/sdk`, it integrates a layered SNN LIF+STDP engine, consciousness proxy assessment, bio-computing platform telemetry, and an IRB ethics monitor — all queryable as MCP tools, resources, and prompts from **Claude Desktop**, **Cursor**, **VS Code**, and any MCP-compatible client.
+
+## 🆕 v3.0.1 — Transport-layer audit: blocking fix + integration suite
+
+A code audit of the v3.0 tree found that **both HTTP transports were inoperative at
+runtime** despite a fully green test suite. `express.json()` consumes the request
+stream, and the MCP SDK requires the already-parsed body to be handed back
+(`handleRequest(req, res, req.body)` / `handlePostMessage(req, res, req.body)`);
+without it the SDK re-read an empty stream and every client→server POST hung until
+timeout. The 229 tests never exercised the transports, so the defect survived them.
+
+- **Fix**: parsed body forwarded at all four call sites (`http-server.ts` ×3,
+  `sse-server.ts` ×1). Verified end-to-end: `initialize` → `tools/list` (62) → `DELETE`.
+- **Session-leak guard**: a POST without a session that is not a valid `initialize`
+  now returns a JSON-RPC `-32000` (HTTP 400) instead of silently constructing an
+  orphaned server instance.
+- **Version unified**: `src/version.ts` is the single source of truth. The MCP server
+  previously announced `2.2.0` to clients, while `/health` reported `2.0.0` (SSE) and
+  `2.9.0` (HTTP).
+- **Bind address**: both transports default to `127.0.0.1`; containers set `0.0.0.0`
+  explicitly. See [Environment Variables](#environment-variables).
+- **Lint restored**: ESLint ≥ 9 requires a flat config, which the repo lacked — `npm run
+  lint` failed outright and CI tolerated it via `continue-on-error`. `eslint.config.js`
+  is now wired and lint is a **blocking** CI gate.
+- **New suite**: `tests/transports.test.ts` — 12 integration tests over both HTTP
+  transports (session lifecycle, tool-count contract, CORS preflight, guards, and
+  named regression tests under a hard timeout so a re-introduced hang fails loudly
+  rather than freezing the run). Total: **241 tests**.
+
+Testability required a small refactor: `createHttpApp()` and `createSseApp()` are now
+exported factories bound to ephemeral ports by the tests, while an `import.meta.url`
+entry-point guard preserves direct `node dist/*-server.js` execution.
 
 ## 🆕 v3.0 — Unified release: OVOMIND bridge + Orch OR criterion layer + CI fix
 
@@ -77,7 +108,7 @@ Koniku Kore ────────────────┘         │     
                                       ├─→ TCAI/ACM Layer (GNW · AKOrN · PAD · Φ̃-RIIU · EI)
                                       ├─→ NeuroPlatform v2 Bridge (MEA ↔ SNN · StimParam · closed loop)
                                       ├─→ Ethics IRB Monitor (mode-aware)
-                                      └─→ MCP Server (50 tools · 11 resources · 8 prompts)
+                                      └─→ MCP Server (62 tools · 11 resources · 8 prompts)
 ```
 
 > **Note on data mode:** In the default `sim` mode, all bio-platform data is synthetically generated. The server is designed to connect to live platforms in `live` mode, but this requires hardware access and appropriate IRB approval.
@@ -101,8 +132,8 @@ Koniku Kore ────────────────┘         │     
 ## Quick Start
 
 ```bash
-git clone https://github.com/christophejlegros-lgtm/ASTRA-Unified-ResearchLab-MCP-v2.9.git
-cd ASTRA-Unified-ResearchLab-MCP-v2.9
+git clone https://github.com/christophejlegros-lgtm/ASTRA-Unified-ResearchLab-MCP-v3.0.1.git
+cd ASTRA-Unified-ResearchLab-MCP-v3.0.1
 
 # Install & build
 npm install
@@ -186,9 +217,13 @@ docker compose up -d
 
 ---
 
-## MCP Tools (41)
+## MCP Tools (62)
 
-All tools declare [MCP annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) (readOnlyHint, destructiveHint, idempotentHint, openWorldHint) and human-readable titles. Core tools below; see [TCAI-INTEGRATION.md](TCAI-INTEGRATION.md) for the 8 `tcai_*` tools and [NEUROPLATFORM-INTEGRATION.md](NEUROPLATFORM-INTEGRATION.md) for the 9 `np_*` tools.
+All tools declare [MCP annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+(readOnlyHint, destructiveHint, idempotentHint, openWorldHint) and human-readable titles.
+Counts below are asserted by the CI stdio smoke test, not maintained by hand.
+
+**Core (12)**
 
 | Tool | Title | Annotations |
 |---|---|---|
@@ -204,10 +239,19 @@ All tools declare [MCP annotations](https://modelcontextprotocol.io/specificatio
 | `get_platform_status` | Bio-Computing Platforms | 📖 read-only · 🌐 open-world |
 | `export_snapshot` | Full State Snapshot | 📖 read-only |
 | `simulation_control` | Simulation Control | ✏️ mutating |
-| `tcai_*` (8) | ACM consciousness cycle, workspace, emotion, memory, self-model, metrics, reset | mixed — see TCAI guide |
-| `np_*` (9) | NeuroPlatform v2: status, stim config, triggers, spike queries, camera, closed loop | mixed — see NeuroPlatform guide |
 
-## MCP Resources (10)
+**Domain families (50)**
+
+| Family | Count | Scope | Guide |
+|---|---|---|---|
+| `wm_*` | 6 | JEPA World Model: encode, predict, plan (CEM), train, surprise | [WORLD-MODEL.md](WORLD-MODEL.md) |
+| `sensor_*` | 6 | V-JEPA 2 · A-JEPA · Koniku Kore · cross-modal fusion | — |
+| `tcai_*` | 17 | ACM cycle, workspace, emotion, memory, self-model, metrics, second-order loop | [TCAI-INTEGRATION.md](TCAI-INTEGRATION.md) · [SECOND-ORDER-LOOP-INTEGRATION.md](SECOND-ORDER-LOOP-INTEGRATION.md) |
+| `np_*` | 9 | NeuroPlatform v2: status, stim config, triggers, spike queries, camera, closed loop | [NEUROPLATFORM-INTEGRATION.md](NEUROPLATFORM-INTEGRATION.md) |
+| `ovo_*` | 6 | OVOMIND affective exteroception bridge (sim by default; live adapter is a stub) | [OVOMIND-INTEGRATION.md](OVOMIND-INTEGRATION.md) |
+| `orch_*` | 6 | Orch OR substrate criterion, decoherence budget, classical surrogate gate | [ORCH-OR-INTEGRATION.en.md](ORCH-OR-INTEGRATION.en.md) · [.fr.md](ORCH-OR-INTEGRATION.fr.md) |
+
+## MCP Resources (11)
 
 | URI | Description |
 |---|---|
@@ -216,10 +260,14 @@ All tools declare [MCP annotations](https://modelcontextprotocol.io/specificatio
 | `astra://acm/state` | Current consciousness proxy assessment vector |
 | `astra://ethics/welfare` | IRB compliance and welfare report (mode-aware) |
 | `astra://snapshot/current` | Complete state dump |
+| `astra://wm/latent` | World Model latent embedding (current) |
+| `astra://wm/predictions` | World Model rollout predictions |
+| `astra://sensors/state` | Multimodal sensor pipeline state (visual · audio · olfactory · fusion) |
 | `astra://tcai/state` | TCAI/ACM workspace, emotion, self-model & metrics |
+| `astra://tcai/second-order` | Second-order self-evidencing loop telemetry (setpoint, model error) |
 | `astra://neuroplatform/state` | NeuroPlatform bridge state (MEA activity, viability, coupling) |
 
-## MCP Prompts (7)
+## MCP Prompts (8)
 
 Pre-built workflow templates that orchestrate multi-tool sequences:
 
@@ -228,7 +276,10 @@ Pre-built workflow templates that orchestrate multi-tool sequences:
 | `system-health-report` | Orchestrates multiple tools into a comprehensive system report |
 | `snn-experiment` | Controlled SNN experiment: reset → stimulate → observe STDP → assess proxies |
 | `ethics-stress-test` | Progressive biomarker degradation: NORMAL → STRESS → DISTRESS → recovery |
+| `wm-experiment` | World Model experiment: encode → predict → compare → plan |
+| `multimodal-experiment` | Full multimodal sensor experiment: visual + audio + olfactory → fused → WM |
 | `tcai-consciousness-cycle` | Guided ACM cycle: specialists → binding → ignition → broadcast → qualia → metrics |
+| `tcai-second-order-loop` | Probe the second-order self-evidencing loop (setpoint regulation) |
 | `neuroplatform-experiment` | Guided closed-loop protocol: read MEA → configure charge-balanced stim → trigger → observe |
 
 ---
@@ -241,34 +292,44 @@ Pre-built workflow templates that orchestrate multi-tool sequences:
 
 src/
 ├── index.ts              # stdio transport entry point
-├── sse-server.ts         # SSE transport (Express)
-├── http-server.ts        # Streamable HTTP transport (Express)
-├── server.ts             # MCP server factory (50 tools + 8 prompts + 11 resources)
-│   ├── server-wm-tools.ts    # World Model JEPA tools (6 tools + 2 resources + 1 prompt)
-│   ├── server-sensor-tools.ts # Multimodal sensor tools (6 tools + 1 resource + 1 prompt)
-│   ├── server-tcai-tools.ts  # TCAI/ACM tools (17 tools + 2 resources + 2 prompts incl. substrate-grounded closed-loop active inference)
-│   ├── server-neuroplatform-tools.ts # NeuroPlatform v2 tools (9 tools + 1 resource + 1 prompt)
+├── sse-server.ts         # SSE transport (Express) — exports createSseApp() for tests
+├── http-server.ts        # Streamable HTTP transport (Express) — exports createHttpApp()
+├── version.ts            # ASTRA_VERSION — single source of truth, consumed by all transports
+├── server.ts             # MCP server factory (62 tools + 8 prompts + 11 resources)
+│   ├── server-wm-tools.ts            # World Model JEPA (6 tools + 2 resources + 1 prompt)
+│   ├── server-sensor-tools.ts        # Multimodal sensors (6 tools + 1 resource + 1 prompt)
+│   ├── server-tcai-tools.ts          # TCAI/ACM (17 tools + 2 resources + 2 prompts, incl. closed-loop active inference)
+│   ├── server-neuroplatform-tools.ts # NeuroPlatform v2 (9 tools + 1 resource + 1 prompt)
+│   ├── server-ovomind-tools.ts       # OVOMIND affective bridge (6 tools)
+│   └── server-orch-tools.ts          # Orch OR criterion layer (6 tools)
 ├── engine/
 │   ├── state.ts          # Reactive state store + parameter bounds registry
 │   ├── snn.ts            # Layered SNN LIF+STDP engine (Map-indexed sparse weights, event-driven)
 │   ├── acm.ts            # Consciousness proxy module (Φ̃ + GW̃ + PAD̃)
 │   ├── ethics.ts         # IRB ethics monitor (mode-aware, biomarker thresholds)
-│   ├── world-model.ts     # JEPA World Model engine (LeWM adapted)
-│   ├── wm-simulation.ts   # WM simulation manager (replay buffer, auto-train)
+│   ├── world-model.ts    # JEPA World Model engine (LeWM adapted)
+│   ├── wm-simulation.ts  # WM simulation manager (replay buffer, auto-train)
 │   ├── multimodal-sensors.ts # V-JEPA 2 + A-JEPA + Koniku + fusion
-│   ├── neuroplatform.ts      # FinalSpark NeuroPlatform v2 port + OrganoidMEA simulator
-│   └── simulation.ts     # Background tick loop
+│   ├── neuroplatform.ts  # FinalSpark NeuroPlatform v2 port + OrganoidMEA simulator
+│   ├── ovomind.ts        # OVOMIND adapter (sim default; live adapter is a declared stub)
+│   ├── simulation.ts     # Background tick loop
+│   └── tcai/             # ACM native port: global-workspace, oscillatory-binding, emotion,
+│                         #   emotional-memory, self-model, second-order, active-inference,
+│                         #   metrics, acm-bridge, orch-or, phenomenal-guard, types
 └── utils/
     └── logger.ts         # Structured logging (pino → stderr)
 
-tests/
-├── astra.test.ts         # Unit tests: state, bounds, SNN, ACM, ethics, security
-├── world-model.test.ts   # World Model: encoder, predictor, SIGReg, CEM, surprise
-├── wm-simulation.test.ts # WM simulation: buffer, training, planning, lifecycle
+tests/                    # 241 tests · 52 suites
+├── astra.test.ts             # Unit: state, bounds, SNN, ACM, ethics, security
+├── world-model.test.ts       # World Model: encoder, predictor, SIGReg, CEM, surprise
+├── wm-simulation.test.ts     # WM simulation: buffer, training, planning, lifecycle
 ├── multimodal-sensors.test.ts # Sensors: V-JEPA, A-JEPA, Koniku, fusion, pipeline
-├── tcai.test.ts          # TCAI/ACM: binding, GNW, memory, emotion, self-model, metrics
-├── neuroplatform.test.ts # NeuroPlatform: StimParam, OrganoidMEA, controllers, bridge
-└── integration.test.ts   # Client SDK integration: tools, resources, prompts, workflow
+├── tcai.test.ts              # TCAI/ACM: binding, GNW, memory, emotion, self-model, metrics
+├── neuroplatform.test.ts     # NeuroPlatform: StimParam, OrganoidMEA, controllers, bridge
+├── second-order.test.ts      # Second-order loop: setpoint regulation, production loop
+├── aif-equivalence.test.ts   # TS↔NumPy active-inference golden equivalence
+├── integration.test.ts       # Client SDK: tools, resources, prompts, workflow
+└── transports.test.ts        # HTTP/SSE transport layer: session lifecycle, guards, regressions
 
 configs/                  # Ready-to-use client configurations
 ```
@@ -328,15 +389,25 @@ node --import tsx --test tests/astra.test.ts
 # Integration tests only (Client SDK)
 node --import tsx --test tests/integration.test.ts
 
-# TCAI / NeuroPlatform suites only
-npm run test:tcai
-npm run test:np
+# Targeted suites
+npm run test:tcai          # TCAI/ACM
+npm run test:np            # NeuroPlatform v2
+npm run test:so            # second-order loop
+npm run test:wm            # World Model
+npm run test:sensors       # multimodal sensors
+npm run test:transports    # HTTP + SSE transport layer
+
+# Static gates
+npm run build              # tsc strict (Node16 ESM)
+npm run lint               # ESLint 9 flat config
+npm run golden:check       # TS↔NumPy active-inference golden (requires python3 + numpy)
 
 # MCP Inspector
 npm run inspect
 ```
 
-> **Full suite: 229/229 passing** (188 prior + 28 second-order loop / active-inference), 0 TypeScript errors (strict, Node16 ESM).
+> **Full suite: 241/241 passing** (229 engine/integration + 12 transport-layer), 0 TypeScript errors
+> (strict, Node16 ESM), 0 ESLint errors. Verified on Node 20 and Node 22 in CI.
 
 ## Development
 
@@ -351,10 +422,19 @@ npm run watch      # TypeScript watch mode
 
 | Variable | Default | Description |
 |---|---|---|
-| `ASTRA_LOG_LEVEL` | `info` | debug, info, warn, error |
+| `ASTRA_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent` |
 | `ASTRA_SSE_PORT` | `9002` | SSE transport port |
+| `ASTRA_SSE_HOST` | `127.0.0.1` | SSE bind address |
 | `ASTRA_HTTP_PORT` | `9003` | Streamable HTTP port |
+| `ASTRA_HTTP_HOST` | `127.0.0.1` | Streamable HTTP bind address |
 | `ASTRA_CORS_ORIGIN` | `*` | CORS allowed origin |
+
+> **Bind address defaults to loopback.** Both HTTP transports bind `127.0.0.1` so a
+> local server is not exposed to the network by default (the permissive CORS default
+> would otherwise widen the attack surface). The Dockerfile and `docker-compose.yml`
+> set `ASTRA_*_HOST=0.0.0.0` explicitly, since a container must accept traffic from
+> outside its own namespace. Set it yourself for any non-container remote deployment —
+> and set `ASTRA_CORS_ORIGIN` to a concrete origin when you do.
 
 ---
 
